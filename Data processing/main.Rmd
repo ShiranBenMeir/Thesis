@@ -1,0 +1,1231 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+```{r}
+source("utilities.R")
+
+```
+
+```{r,message=FALSE,warning=FALSE}
+### read TCGA data from files
+source("preprocessing_TCGA.R")
+ENG_data<-data_pre
+
+########################
+#### data processing ### 
+########################
+
+#remove isoforms
+for (i in 1:nrow(ENG_data)){
+  splited_ENG <- strsplit(ENG_data[i,1], ".", fixed = TRUE)[[1]]
+  ENG_data[i,1]<- c(splited_ENG[1])
+}
+
+# convert ENSG to symbol 
+colnames(ENG_data)[1] <- "ENSEMBL"
+eng_vec<-as.vector(ENG_data$ENSEMBL)
+source("convert_ENSG_to_SYMBOL.R")
+
+#more processing 
+
+geneSymbol_data<-A_ENG_data
+geneSymbol_data <- geneSymbol_data[, !duplicated(colnames(geneSymbol_data))] #remove duplicated col names
+geneSymbol_data<- na.omit(geneSymbol_data)   #remove NA
+geneSymbol_data<-geneSymbol_data[!duplicated(geneSymbol_data[,1]),] #remove duplicated row names
+geneSymbol_data <- data.frame(geneSymbol_data[,-1], row.names = geneSymbol_data[,1],check.names=FALSE)  #make first col the row headers
+geneSymbol_data<-geneSymbol_data[apply(geneSymbol_data[,-1], 1, function(x)!all(x==0)),] #remove rows with sum 0
+transposed_geneSymbol_data <- t(geneSymbol_data) #transpose data
+
+
+for (i in 1:nrow(transposed_geneSymbol_data)){
+  splited_patient <- strsplit(row.names(transposed_geneSymbol_data)[i], ".", fixed = TRUE)[[1]]
+  row.names(transposed_geneSymbol_data)[i]<- c(splited_patient[1])
+}
+
+# creating unnormalized data frame named unnormalized_FPKM 
+unnormalized_FPKM<-as.data.frame(transposed_geneSymbol_data)
+
+
+
+# creating normalized data frame named (!!!!!) FPKM_DATA (!!!!!)
+normalized_FPKM<-transposed_geneSymbol_data
+normalized_FPKM <- log2(normalized_FPKM+1)
+normalized_FPKM <- scale(normalized_FPKM)
+FPKM_DATA<-normalized_FPKM
+
+
+
+rm(ENG_data, A_ENG_data, transposed_geneSymbol_data, all_genes, geneSymbol_data, normalized_FPKM, i, eng_vec, splited_ENG, splited_patient)
+```
+
+Creating LGG/GBM heatmap with A1/A2 labeling using RNAseq genes. 
+
+```{r,message=FALSE,warning=FALSE}
+library(dplyr)
+library("gplots")
+
+MERGED_DATA<- MERGED_DATA_generation(FPKM_DATA)
+TCGA_DATA<- generate_TCGA_DATA_from_TCGA_clinical_data(MERGED_DATA, FPKM_DATA) 
+RNAseq_genes_astrocytic_df_list<- RNA_seq_data_processing()
+
+RNAseq_genes<- as.vector(RNAseq_genes_astrocytic_df_list[[1]])
+astrocytic_df<- RNAseq_genes_astrocytic_df_list[[2]]
+
+TCGA_DATA<- TCGA_DATA %>% dplyr::select(project_id, RNAseq_genes)
+hm_data<- TCGA_DATA
+names(hm_data)[1]<- "label"
+hm_data$label[hm_data$label == "TCGA-LGG"] <- "moccasin"
+hm_data$label[hm_data$label == "TCGA-GBM"] <- "orange4"
+
+
+
+astrocytic_df$log2FC[astrocytic_df$log2FC == "A1"] <- "gray36"
+astrocytic_df$log2FC[astrocytic_df$log2FC == "A2"] <- "lightcyan"
+
+
+
+out<-heatmap.2(
+  x = data.matrix(hm_data[,2:ncol(hm_data)]),
+  cexCol = 0.65,
+  
+  # dendrogram control:
+  # -------------------
+  #distfun = function(x) as.dist((1-cor(t(x)))/2),   # Correlation distance
+  dendrogram = "both",                              # If to cluster both rows and columns
+  
+  # data scaling (standardization):
+  # -------------------------------
+  scale = "none",
+  
+  # level trace:
+  # ------------
+  trace = "none",
+  
+  # Row/Column Labeling:
+  # --------------------
+  #ColSideColors=c(as.character(A1A2_column$log2FC)),
+  ColSideColors=c(as.character(astrocytic_df$log2FC)),
+  RowSideColors = c(as.character(hm_data$label)),    # Measurement 7-10: red
+  
+  
+  # Mapping data to colors:
+  # ------------------------
+  col = colorRampPalette(c("black", "dodgerblue3", "deepskyblue2")),  
+  breaks = c(seq(-2,-0.4,length=50),                # for green
+             seq(-0.4+0.01,+0.4,length=50),         # for white
+             seq(+0.4+0.01,2,length=50)),       # for red
+  #lhei = c(1,8) , lwid = c(0,7),
+)
+
+
+```
+
+
+Creating LGG/GBM heatmap with A1/A2/progenitor/mature labeling using Heiland genes. 
+```{r,message=FALSE,warning=FALSE}
+library(dplyr)
+library("gplots")
+
+MERGED_DATA<- MERGED_DATA_generation(FPKM_DATA)
+TCGA_DATA<- generate_TCGA_DATA_from_TCGA_clinical_data(MERGED_DATA, FPKM_DATA) 
+
+Heiland_genes_Heiland_df_list<- Heiland_data_processing()
+
+Heiland_genes<- as.vector(Heiland_genes_Heiland_df_list[[1]])
+Heiland_genes_df<- Heiland_genes_Heiland_df_list[[2]]
+
+genes_for_hm<- dplyr::select(TCGA_DATA, project_id ,Heiland_genes)
+
+
+colnames(genes_for_hm)[1] <- "label"
+genes_for_hm$label[genes_for_hm$label == "TCGA-LGG"] <- "moccasin"
+genes_for_hm$label[genes_for_hm$label == "TCGA-GBM"] <- "orange4"
+
+Heiland_genes_df$label[Heiland_genes_df$label == "Inflammatory Gene-A1"] <- "gray36"
+Heiland_genes_df$label[Heiland_genes_df$label == "Alternative Activation-A2"] <- "lightcyan"
+Heiland_genes_df$label[Heiland_genes_df$label == "Progenitor"] <- "red"
+Heiland_genes_df$label[Heiland_genes_df$label == "Mature "] <- "yellow"
+
+
+genes_for_hm <- genes_for_hm[ order(genes_for_hm$label),]
+
+
+out<-heatmap.2(
+  x = data.matrix(genes_for_hm[,2:ncol(genes_for_hm)]),
+  cexCol = 0.65,
+  
+  # dendrogram control:
+  # -------------------
+  #distfun = function(x) as.dist((1-cor(t(x)))/2),   # Correlation distance
+  dendrogram = "both",                              # If to cluster both rows and columns
+  
+  # data scaling (standardization):
+  # -------------------------------
+  scale = "none",
+  
+  # level trace:
+  # ------------
+  trace = "none",
+  Rowv=FALSE,
+  
+  # Row/Column Labeling:
+  # --------------------
+  ColSideColors=c(as.character(Heiland_genes_df$label)),
+  RowSideColors = c(as.character(genes_for_hm$label)),    # Measurement 7-10: red
+  
+  
+  # Mapping data to colors:
+  # ------------------------
+  col = colorRampPalette(c("black", "dodgerblue3", "deepskyblue2")),  
+  breaks = c(seq(-2,-0.4,length=50),                # for green
+             seq(-0.4+0.01,+0.4,length=50),         # for white
+             seq(+0.4+0.01,2,length=50)),       # for red
+  #lhei = c(1,8) , lwid = c(0,7),
+)
+
+
+
+```
+
+Creating survival heatmap with A1/A2 labeling using RNAseq genes.
+In order to make a heatmap that represents only LGG patients, you need to use the line that is now shown as a comment.
+
+```{r,message=FALSE,warning=FALSE}
+library(dplyr)
+library("gplots")
+
+MERGED_DATA<- MERGED_DATA_generation(FPKM_DATA)
+TCGA_DATA<- generate_TCGA_DATA_from_TCGA_clinical_data(MERGED_DATA, FPKM_DATA) 
+RNAseq_genes_astrocytic_df_list<- RNA_seq_data_processing()
+
+RNAseq_genes<- as.vector(RNAseq_genes_astrocytic_df_list[[1]])
+astrocytic_df<- RNAseq_genes_astrocytic_df_list[[2]]
+
+
+TCGA_DATA<- TCGA_DATA %>% dplyr::select(project_id,days_to_death, RNAseq_genes)
+#TCGA_DATA<-subset(TCGA_DATA, TCGA_DATA$project_id=="TCGA-LGG")
+TCGA_DATA$project_id<-NULL
+
+genes_for_hm<- TCGA_DATA
+na_days_to_death<-genes_for_hm[(genes_for_hm$days_to_death=="'--"),]
+na_days_to_death[1]<-"black"
+genes_for_hm<-genes_for_hm[!(genes_for_hm$days_to_death=="'--"),]
+genes_for_hm$days_to_death <- as.numeric(as.character(genes_for_hm$days_to_death))
+genes_for_hm$days_to_death <- cut(genes_for_hm$days_to_death, breaks = c(0,365,1095,Inf),labels = c("less than 1","1-3","more than 3"))
+genes_for_hm<- rbind(na_days_to_death, genes_for_hm)
+colnames(genes_for_hm)[1] <- "label"
+genes_for_hm<-subset(genes_for_hm, genes_for_hm$label!="black")
+
+
+genes_for_hm$label[genes_for_hm$label == "Alive"] <- "black"
+genes_for_hm$label[genes_for_hm$label == "less than 1"] <- "yellow"
+genes_for_hm$label[genes_for_hm$label == "1-3"] <- "orange"
+genes_for_hm$label[genes_for_hm$label == "more than 3"] <- "red"
+
+genes_for_hm<- genes_for_hm[order(factor(genes_for_hm$label, levels = c("red", "orange", "yellow" ))),]
+
+astrocytic_df$log2FC[astrocytic_df$log2FC == "A1"] <- "gray36"
+astrocytic_df$log2FC[astrocytic_df$log2FC == "A2"] <- "lightcyan"
+
+astrocytic_df<-astrocytic_df %>% filter(row.names(astrocytic_df) %in% colnames(genes_for_hm))
+
+
+out<-heatmap.2(
+  x = data.matrix(genes_for_hm[,2:ncol(genes_for_hm)]),
+  cexCol = 0.65,
+  
+  # dendrogram control:
+  # -------------------
+  #distfun = function(x) as.dist((1-cor(t(x)))/2),   # Correlation distance
+  dendrogram = "both",                              # If to cluster both rows and columns
+  
+  # data scaling (standardization):
+  # -------------------------------
+  scale = "none",
+  
+  # level trace:
+  # ------------
+  trace = "none",
+  Rowv=FALSE,
+  
+  # Row/Column Labeling:
+  # --------------------
+  ColSideColors=c(as.character(astrocytic_df$log2FC)),
+  RowSideColors = c(as.character(genes_for_hm$label)),    # Measurement 7-10: red
+  
+  
+  # Mapping data to colors:
+  # ------------------------
+  col = colorRampPalette(c("black", "dodgerblue3", "deepskyblue2")),  
+  breaks = c(seq(-2,-0.4,length=50),                # for green
+             seq(-0.4+0.01,+0.4,length=50),         # for white
+             seq(+0.4+0.01,2,length=50)),       # for red
+  #lhei = c(1,8) , lwid = c(0,7),
+)
+
+
+
+```
+
+
+Creating survival heatmap with A1/A2/progenitor/mature labeling using Heiland genes.
+In order to make a heatmap that represents only LGG patients, you need to use the line that is now shown as a comment.
+
+```{r}
+library(dplyr)
+library("gplots")
+
+MERGED_DATA<- MERGED_DATA_generation(FPKM_DATA)
+TCGA_DATA<- generate_TCGA_DATA_from_TCGA_clinical_data(MERGED_DATA, FPKM_DATA) 
+
+Heiland_genes_Heiland_df_list<- Heiland_data_processing()
+
+Heiland_genes<- as.vector(Heiland_genes_Heiland_df_list[[1]])
+Heiland_genes_df<- Heiland_genes_Heiland_df_list[[2]]
+
+genes_for_hm<- dplyr::select(TCGA_DATA, project_id, days_to_death ,Heiland_genes)
+#TCGA_DATA<-subset(TCGA_DATA, TCGA_DATA$project_id=="TCGA-LGG")
+genes_for_hm<- dplyr::select(TCGA_DATA, days_to_death ,Heiland_genes)
+
+
+
+na_days_to_death<-genes_for_hm[(genes_for_hm$days_to_death=="'--"),]
+na_days_to_death[1]<-"black"
+genes_for_hm<-genes_for_hm[!(genes_for_hm$days_to_death=="'--"),]
+genes_for_hm$days_to_death <- as.numeric(as.character(genes_for_hm$days_to_death))
+genes_for_hm$days_to_death <- cut(genes_for_hm$days_to_death, breaks = c(0,365,1095,Inf),labels = c("yellow","orange","red"))
+genes_for_hm<- rbind(na_days_to_death, genes_for_hm)
+colnames(genes_for_hm)[1] <- "label"
+genes_for_hm<-subset(genes_for_hm, genes_for_hm$label!="black")
+
+
+Heiland_genes_df$label[Heiland_genes_df$label == "Inflammatory Gene-A1"] <- "gray36"
+Heiland_genes_df$label[Heiland_genes_df$label == "Alternative Activation-A2"] <- "lightcyan"
+Heiland_genes_df$label[Heiland_genes_df$label == "Progenitor"] <- "red"
+Heiland_genes_df$label[Heiland_genes_df$label == "Mature "] <- "yellow"
+
+genes_for_hm<- genes_for_hm[order(factor(genes_for_hm$label, levels = c("red", "orange", "yellow" ))),]
+
+
+out<-heatmap.2(
+  x = data.matrix(genes_for_hm[,2:ncol(genes_for_hm)]),
+  cexCol = 0.65,
+  
+  # dendrogram control:
+  # -------------------
+  #distfun = function(x) as.dist((1-cor(t(x)))/2),   # Correlation distance
+  dendrogram = "both",                              # If to cluster both rows and columns
+  
+  # data scaling (standardization):
+  # -------------------------------
+  scale = "none",
+  
+  # level trace:
+  # ------------
+  trace = "none",
+  Rowv=FALSE,
+  
+  # Row/Column Labeling:
+  # --------------------
+  ColSideColors=c(as.character(Heiland_genes_df$label)),
+  RowSideColors = c(as.character(genes_for_hm$label)),    # Measurement 7-10: red
+  
+  
+  # Mapping data to colors:
+  # ------------------------
+  col = colorRampPalette(c("black", "dodgerblue3", "deepskyblue2")),  
+  breaks = c(seq(-2,-0.4,length=50),                # for green
+             seq(-0.4+0.01,+0.4,length=50),         # for white
+             seq(+0.4+0.01,2,length=50)),       # for red
+  #lhei = c(1,8) , lwid = c(0,7),
+)
+
+```
+
+
+
+
+
+
+
+We used Deseq.2 in order to execute diffrential expression. We did it for every heatmap we created. We created rnk file out of the ouput of deseq in order to use GSEA and get the plots we showed on the thesis.
+this chunk includes all combinations- LGG/GBM WITH Heiland_genes, LGG/GBM with Heiland_genes, survival with Heiland_genes, survival with Heiland_genes. you need to change the flags according to what you whant to get.
+Right now the wrriten code show the deseq and rnk file creation of LGG/GBM WITH Heiland_genes.
+In order to get LGG/GBM samples only, you need to use the lines that are as comments.
+```{r}
+##Deseq
+if (!require("DESeq2")) {
+  BiocManager::install("DESeq2")
+}
+library(DESeq2)
+library(dplyr)
+
+Flag_dataset= "Heiland_genes"
+Flag_feature= "project_id"
+
+MERGED_DATA<- MERGED_DATA_generation(FPKM_DATA)
+TCGA_DATA<- generate_TCGA_DATA_from_TCGA_clinical_data(MERGED_DATA, unnormalized_FPKM) 
+Heiland_genes_Heiland_df_list<- Heiland_data_processing()
+Heiland_genes<- as.vector(Heiland_genes_Heiland_df_list[[1]])
+RNAseq_genes_astrocytic_df_list<- RNA_seq_data_processing()
+RNAseq_genes<- as.vector(RNAseq_genes_astrocytic_df_list[[1]])
+
+
+
+if(Flag_dataset== "Heiland_genes"){
+  TCGA_DATA<- dplyr::select(TCGA_DATA, project_id, days_to_death,vital_status ,Heiland_genes)
+  #TCGA_DATA<-subset(TCGA_DATA, TCGA_DATA$project_id=="TCGA-LGG")
+}
+if(Flag_dataset=="RNAseq"){
+  TCGA_DATA<- dplyr::select(TCGA_DATA, project_id,RNAseq_genes)
+  #TCGA_DATA<-subset(TCGA_DATA, TCGA_DATA$project_id=="TCGA-LGG")
+}
+
+
+if(Flag_feature=="survival"){
+  TCGA_DATA<-TCGA_DATA[!(TCGA_DATA$days_to_death=="'--"),]
+  TCGA_DATA$vital_status<- NULL
+  TCGA_DATA$days_to_death <- as.numeric(as.character(TCGA_DATA$days_to_death))
+  colnames(TCGA_DATA)[1] <- "label"
+  TCGA_DATA$label <- cut(TCGA_DATA$label, breaks = c(0,365,1095,Inf),labels = c("less than     1","1-3","more than 3"))
+  TCGA_DATA<-TCGA_DATA[!(TCGA_DATA$label=="1-3"),]
+}
+
+
+if(Flag_feature=="project_id"){
+    TCGA_DATA$vital_status<- NULL
+    TCGA_DATA$days_to_death<- NULL
+    colnames(TCGA_DATA)[1] <- "label"
+}
+
+
+
+######################
+#######deseq##########
+######################
+
+
+deseq_data<-TCGA_DATA
+classification<-as.data.frame(deseq_data[,"label"])
+colnames(classification)[1] <- "label"
+deseq_data[,"label"]<-NULL
+
+ex <- t(deseq_data)
+
+ex<- data.matrix(ex)
+ddsFullCountTable <- DESeqDataSetFromMatrix(
+  countData = round(ex),
+  colData =classification,
+  design = ~label)
+
+
+dds<-DESeq(ddsFullCountTable)
+
+res=results(dds)
+res=results(dds,contrast = c('label','TCGA-GBM','TCGA-LGG'))
+write.csv(as.data.frame(res), 
+          file=paste0(getwd(),"/Deseq_file/GBM vs LGG.csv"))
+
+
+########filter deseq results: we want significant genes with log2change >1  ############
+deseq_result <- read.csv(file = "Deseq_file/GBM vs LGG.csv")
+deseq_result<- deseq_result %>% filter(padj < 0.05 & abs(log2FoldChange) > 1.5 )
+
+##adding a FoldChange column in addition to the log2FoldChange column
+df <- deseq_result
+df$FoldChange<- 2^df$log2FoldChange
+df2<- cbind(df[,1:3], df$FoldChange, df[,4:7])
+names(df2)[4]<- "FoldChange"
+write.csv(as.data.frame(df2),file=paste0(getwd(),"/Deseq_file/GBM vs LGG.csv"),row.names=F)
+############
+
+
+##########################
+###create rnk table#######
+#########################
+
+# first, we need to create a metric score column. 
+deseq_result$fcsign <- sign(deseq_result$log2FoldChange) 
+deseq_result$logP=-log10(deseq_result$padj)
+deseq_result$metric= deseq_result$logP/deseq_result$fcsign
+
+colnames(deseq_result)[1]<-"Gene"       #change the name of the genes column
+
+#delete NA values
+deseq_result<-deseq_result[!is.na(deseq_result$Gene),]
+deseq_result<-deseq_result[!is.na(deseq_result$metric),]
+
+# create new file: gene name + rank
+deseq_result<-deseq_result[,c("Gene", "metric")]
+
+# write rnk table to directory:
+write.table(deseq_result,file=paste0(getwd(),"/Deseq_file/GBM vs LGG_genes_for_GSEA.rnk"),quote=F,sep="\t",row.names=F)
+
+
+```
+
+
+
+We used Heiland and RNAseq data in order to find genes that their Kaplan-Meier is significant.
+This chunk prints all genes that their kaplan-meier plots are significant.
+
+```{r}
+########### KM #################
+################################
+
+
+library(survival)
+library(survminer)
+library(lubridate)
+library(tibble)
+library(dplyr)
+
+MERGED_DATA<- MERGED_DATA_generation(FPKM_DATA)
+TCGA_DATA<- generate_TCGA_DATA_from_TCGA_clinical_data(MERGED_DATA, FPKM_DATA) 
+
+RNAseq_genes_astrocytic_df_list<- RNA_seq_data_processing()
+RNAseq_genes<- as.vector(RNAseq_genes_astrocytic_df_list[[1]])
+
+Heiland_genes_Heiland_df_list<- Heiland_data_processing()
+Heiland_genes<- as.vector(Heiland_genes_Heiland_df_list[[1]])
+
+astro_genes<- c(Heiland_genes,RNAseq_genes)
+astro_genes<- unique(astro_genes)
+
+TCGA_DATA<- dplyr::select(TCGA_DATA,project_id,days_to_death, year_of_diagnosis,vital_status, c(astro_genes))
+
+#TCGA_DATA<-TCGA_DATA[(TCGA_DATA$project_id=="TCGA-GBM"),]
+TCGA_DATA$project_id<- NULL
+
+
+#-------------------------------  
+km_data<- prep_for_KM(TCGA_DATA)  #prep data for kaplan-meier analysis
+
+significant_genes <- vector(length=1000)
+genes_vec<- c(astro_genes)
+
+#this loop runs through each gene in the astro_genes vector and creates a kaplan-meier plot of this gene. if the plot is significant- the name is added to significant_genes vector.
+for (gene_name in genes_vec){
+  pval <- run_km(km_data, gene_name)
+  if(length(pval)>0){
+    if((pval[1,1]< 0.05) & class(pval[1,1]) =="numeric"){
+      significant_genes <- append(significant_genes, gene_name) 
+    } 
+  }
+}
+
+significant_genes <- significant_genes[! significant_genes %in% c('FALSE')]
+print(significant_genes)
+
+rm(km_data, significant_genes)
+
+```
+
+
+This chunk generates a single kaplan-meier plot of a single gene. The code as written creates a kaplan-meier plot of the gene C3. 
+
+```{r}
+library(survival)
+library(survminer)
+library(lubridate)
+library(tibble)
+library(dplyr)
+
+GeneName <- "C3"
+
+MERGED_DATA<- MERGED_DATA_generation(FPKM_DATA)
+TCGA_DATA<- generate_TCGA_DATA_from_TCGA_clinical_data(MERGED_DATA, FPKM_DATA) 
+
+RNAseq_genes_astrocytic_df_list<- RNA_seq_data_processing()
+RNAseq_genes<- as.vector(RNAseq_genes_astrocytic_df_list[[1]])
+
+Heiland_genes_Heiland_df_list<- Heiland_data_processing()
+Heiland_genes<- as.vector(Heiland_genes_Heiland_df_list[[1]])
+
+astro_genes<- c(Heiland_genes,RNAseq_genes)
+astro_genes<- unique(astro_genes)
+
+TCGA_DATA<- dplyr::select(TCGA_DATA,project_id,days_to_death, year_of_diagnosis,vital_status, c(astro_genes))
+
+#TCGA_DATA<-TCGA_DATA[(TCGA_DATA$project_id=="TCGA-GBM"),]
+TCGA_DATA$project_id<- NULL
+
+
+#-------------------------------  
+km_data<- prep_for_KM(TCGA_DATA)  #prep data for kaplan-meier analysis
+
+km_data2<- km_data
+km_data2<- dplyr::select(km_data, GeneName , days_to_death, vital_status)
+names(km_data2)[1]<-"gene"
+km_data2$gene<- as.numeric(km_data2$gene)
+km_data2$gene <- cut(km_data2$gene, breaks = c(-3,0,Inf),labels = c("low", "high"))
+km_data2<-km_data2[!(km_data2$gene=="mid"),]
+
+
+f1<-Surv(km_data2$days_to_death, as.numeric(km_data2$vital_status))
+fit = survfit(f1 ~ gene, data = km_data2)
+ggsurvplot(fit, data = km_data2, pval = T,risk.table = TRUE )
+
+rm(km_data, km_data2, fit, GeneName)
+
+```
+
+
+Generation of PCA+tSNE+UMAP of glioma features. This specific example is  the PCA+tSNE+UMAP of the feature: Transcriptome.Subtype.
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(ggfortify)
+
+MERGED_DATA<- MERGED_DATA_generation(FPKM_DATA)
+TCGA_DATA<- generate_TCGA_DATA_from_Ceccarelli(MERGED_DATA, unnormalized_FPKM)
+TCGA_DATA<-TCGA_DATA[(TCGA_DATA$project_id=="TCGA-GBM"),]
+TCGA_DATA$project_id<-NULL
+
+RNAseq_genes_astrocytic_df_list<- RNA_seq_data_processing()
+RNAseq_genes<- as.vector(RNAseq_genes_astrocytic_df_list[[1]])
+
+Heiland_genes_Heiland_df_list<- Heiland_data_processing()
+Heiland_genes<- as.vector(Heiland_genes_Heiland_df_list[[1]])
+
+astro_genes<- c(Heiland_genes,RNAseq_genes)
+#!!!!!!!!!!!!!! if you want to change to another glioma features- it's here!!!!!!!!!!
+TCGA_DATA<- TCGA_DATA %>% dplyr::select(Transcriptome.Subtype,astro_genes)
+
+################
+################
+
+ 
+#perform PCA:
+library(devtools)
+pca_data<- TCGA_DATA
+prcomp_data<-pca_data[2:length(pca_data)] #remove label column
+prcomp_data<-prcomp_data[,sapply(prcomp_data, function(v) var(v, na.rm=TRUE)!=0)] #remove columns with constant values
+pca_result <-prcomp(prcomp_data, center = TRUE, scale=TRUE)
+colnames(pca_data)[1] <- "label"
+pca_data$label<- (pca_data$label)
+pca_data$label<- as.factor(pca_data$label)
+autoplot(pca_result, x=2, y=5, data = pca_data, colour = 'label', shape= 'label', 
+         #frame = TRUE
+         )
+rm(pca_data,prcomp_data,pca_result)
+
+
+#perform t-sne:
+library(Rtsne)
+tsne_data<-TCGA_DATA
+colnames(tsne_data)[1] <- "label"
+tsne<- Rtsne(tsne_data[2:length(tsne_data)], dims=2, initial_dims  = 15,  perplexity =30)
+df.tsne <- data.frame(tsne$Y)  
+ggplot(df.tsne, aes(x=X1, y=X2, color=tsne_data$label)) + geom_point(size=1)
+rm(tsne_data,df.tsne, tsne)
+
+
+
+#perform UMAP:
+library(umap)
+umap_data<-TCGA_DATA
+colnames(umap_data)[1] <- "label"
+umap<-umap(umap_data[2:length(umap_data)],labels=as.factor(umap_data$label),controlscale=TRUE,scale=3)
+
+df <- data.frame(x = umap$layout[,1],
+                 y = umap$layout[,2], 
+                 label = umap_data[!duplicated(umap_data), 1])
+
+ggplot(df, aes(x, y, colour = label)) +
+  geom_point()
+rm(umap_data,df,umap)
+
+
+```
+
+
+Here i gathered the heatmaps of all the features we decided to present in a heatmap. On the thesis we generated the heatmap of each feature using astrocytes and than microglia genes. On every chunk there is a FLAG that can be mictoglia or astrocytes. The heatmap will use astrocytes/microglia genes according to the FLAG. 
+
+
+
+```{r}
+###IDH status#######
+###################
+library(ComplexHeatmap)
+library(dplyr)
+
+FLAG= "microglia"
+
+MERGED_DATA<- MERGED_DATA_generation(FPKM_DATA)
+TCGA_DATA<- generate_TCGA_DATA_from_Ceccarelli(MERGED_DATA, FPKM_DATA)
+RNAseq_genes_astrocytic_df_list<- RNA_seq_data_processing()
+RNAseq_genes<- as.vector(RNAseq_genes_astrocytic_df_list[[1]])
+
+Heiland_genes_Heiland_df_list<- Heiland_data_processing()
+Heiland_genes<- as.vector(Heiland_genes_Heiland_df_list[[1]])
+
+astro_genes<- c(Heiland_genes,RNAseq_genes)
+astro_genes<- unique(astro_genes)
+microglia_genes<- microglia_BRENDA_genes_processing()
+
+if(FLAG=="astrocytes"){
+TCGA_DATA<- TCGA_DATA %>% dplyr::select(names(TCGA_DATA[,1:11]),astro_genes)
+}
+
+if(FLAG=="microglia"){
+TCGA_DATA<- TCGA_DATA %>% dplyr::select(names(TCGA_DATA[,1:11]),microglia_genes)
+}
+
+TCGA_DATA<- convert_num_surv_to_categorical_surv(TCGA_DATA)
+
+
+
+TCGA_DATA <- TCGA_DATA[ order(TCGA_DATA$IDH.status),]
+heatmap_data<-data.matrix(TCGA_DATA[,11:ncol(TCGA_DATA)])
+annotation_row<- TCGA_DATA[,1:10]    # set the annotations of the heatmap
+annotation_row$ESTIMATE.immune.score<- as.numeric(annotation_row$ESTIMATE.immune.score)
+annotation_row$ESTIMATE.stromal.score<- as.numeric(annotation_row$ESTIMATE.stromal.score)
+
+# set the order of the annotations bars
+ann <- data.frame( 
+  annotation_row$IDH.status,
+  annotation_row$IDH.codel.subtype,
+  annotation_row$Transcriptome.Subtype,
+  annotation_row$Survival..months.,
+  annotation_row$Grade,
+  annotation_row$gender,
+  annotation_row$Histology,
+  annotation_row$project_id ,
+  annotation_row$ESTIMATE.immune.score,
+  annotation_row$ESTIMATE.stromal.score)
+
+
+# set the names of the annotations
+names(ann)<- c("IDH status","IDH subtype","Transcriptome Subtype","survival","Grade","Gender","Histology",
+               "project_id" ,"immune", "stromal")
+
+#set the colors for every annotation
+colours<- list("Grade"=c("G2"="#00CBFF","G3"="#BEC100", "G4"="#00DB98"),
+               "IDH status"=c("Mutant"="#FA9A99","WT"="#756FB3"),         
+               "IDH subtype"=c("IDHmut-codel"="#125a5f","IDHmut-non-codel"="#5f1712", "IDHwt"="#FFFF33"),
+               "project_id"=c("TCGA-LGG"="#75E6DA","TCGA-GBM"="#05445E"),
+               "Gender"= c("female"="#800080", "male"="#80dfff"),
+               "survival"=c("less than 1"="yellow","1-3"="orange", "more than 3"="red", "na"="black"),
+               "histology"=c("astrocytoma"="#1B9E77","glioblastoma"="#05445E", "oligoastrocytoma"="#D95F02", "oligodendroglioma"="#7570B3"),
+               "Transcriptome Subtype"=c("CL"="#F9E4D4", "PN"="#D67D3E","NE"="#9C0F48", "ME"="#470D21"),
+               "GCIMP"=c("G-CIMP-high"="#1B9E77", "G-CIMP-low"="#05445E")
+               #,"immune"= c("high"="#B70A37", "mid"= "#173C6D", "low"="#0DACD1")
+               ) 
+
+# set annotation setting+ add immune_score and stromal_score annotations as bar plot in addition.
+ha = rowAnnotation(df = ann,
+                   immune_score= anno_barplot(annotation_row$ESTIMATE.immune.score),
+                   stromal_score=anno_barplot(annotation_row$ESTIMATE.stromal.score),
+                   show_annotation_name = c(TRUE, TRUE, TRUE, TRUE,T,T,T,T,T,T,T,T),
+                   annotation_name_rot = c(90, 90, 90,90,90,90,90,90,90,90,90,90),
+                   annotation_name_gp= gpar(fontsize = 8),
+                   col = colours)
+
+
+
+out<-draw(Heatmap(heatmap_data, 
+                  split=factor(ann[,1],levels=c("WT","Mutant")),
+                  show_row_names=TRUE,
+                  column_names_gp = grid::gpar(fontsize = 0.5),
+                  row_names_gp = grid::gpar(fontsize = 0.5),
+                  cluster_row_slices = FALSE,
+                  column_names_rot = 90,
+                  na_col = "black",
+                  name="Heatmap",
+                  #top_annotation = top_annotation
+                  )+
+            ha, heatmap_legend_side="left", annotation_legend_side="left")
+
+rm(ha, colours, heatmap_data, out, selected_columns, ann, annotation_row)
+```
+
+```{r}
+###IDH subtype######
+####################
+
+library(ComplexHeatmap)
+library(dplyr)
+
+FLAG= "microglia"
+
+MERGED_DATA<- MERGED_DATA_generation(FPKM_DATA)
+TCGA_DATA<- generate_TCGA_DATA_from_Ceccarelli(MERGED_DATA, FPKM_DATA)
+RNAseq_genes_astrocytic_df_list<- RNA_seq_data_processing()
+RNAseq_genes<- as.vector(RNAseq_genes_astrocytic_df_list[[1]])
+
+Heiland_genes_Heiland_df_list<- Heiland_data_processing()
+Heiland_genes<- as.vector(Heiland_genes_Heiland_df_list[[1]])
+
+astro_genes<- c(Heiland_genes,RNAseq_genes)
+astro_genes<- unique(astro_genes)
+microglia_genes<- microglia_BRENDA_genes_processing()
+
+if(FLAG=="astrocytes"){
+TCGA_DATA<- TCGA_DATA %>% dplyr::select(names(TCGA_DATA[,1:11]),astro_genes)
+}
+
+if(FLAG=="microglia"){
+TCGA_DATA<- TCGA_DATA %>% dplyr::select(names(TCGA_DATA[,1:11]),microglia_genes)
+}
+
+TCGA_DATA<- convert_num_surv_to_categorical_surv(TCGA_DATA)
+
+
+TCGA_DATA <- TCGA_DATA[ order(TCGA_DATA$IDH.codel.subtype),]
+heatmap_data<-data.matrix(TCGA_DATA[,11:ncol(TCGA_DATA)])
+annotation_row<- TCGA_DATA[,1:10]
+annotation_row$ESTIMATE.immune.score<- as.numeric(annotation_row$ESTIMATE.immune.score)
+annotation_row$ESTIMATE.stromal.score<- as.numeric(annotation_row$ESTIMATE.stromal.score)
+
+ann <- data.frame( 
+  annotation_row$IDH.codel.subtype,
+  annotation_row$IDH.status,
+  annotation_row$Transcriptome.Subtype,
+  annotation_row$Survival..months.,
+  annotation_row$Grade,
+  annotation_row$gender,
+  annotation_row$Histology,
+  annotation_row$project_id ,
+  annotation_row$ESTIMATE.immune.score,
+  annotation_row$ESTIMATE.stromal.score)
+
+
+
+names(ann)<- c("IDH subtype","IDH status","Transcriptome Subtype","survival","Grade","Gender","Histology",
+               "project_id" ,"immune", "stromal")
+
+colours<- list("Grade"=c("G2"="#00CBFF","G3"="#BEC100", "G4"="#00DB98"),
+               "IDH status"=c("Mutant"="#FA9A99","WT"="#756FB3"),         
+               "IDH subtype"=c("IDHmut-codel"="#125a5f","IDHmut-non-codel"="#5f1712", "IDHwt"="#FFFF33"),
+               "project_id"=c("TCGA-LGG"="#75E6DA","TCGA-GBM"="#05445E"),
+               "Gender"= c("female"="#800080", "male"="#80dfff"),
+               "survival"=c("less than 1"="yellow","1-3"="orange", "more than 3"="red", "na"="black"),
+               "histology"=c("astrocytoma"="#1B9E77","glioblastoma"="#05445E", "oligoastrocytoma"="#D95F02", "oligodendroglioma"="#7570B3"),
+               "Transcriptome Subtype"=c("CL"="#F9E4D4", "PN"="#D67D3E","NE"="#9C0F48", "ME"="#470D21"),
+               "GCIMP"=c("G-CIMP-high"="#1B9E77", "G-CIMP-low"="#05445E")
+               #,"immune"= c("high"="#B70A37", "mid"= "#173C6D", "low"="#0DACD1")
+               ) 
+
+
+ha = rowAnnotation(df = ann,
+                   immune_score= anno_barplot(annotation_row$ESTIMATE.immune.score),
+                   stromal_score=anno_barplot(annotation_row$ESTIMATE.stromal.score),
+                   show_annotation_name = c(TRUE, TRUE, TRUE, TRUE,T,T,T,T,T,T,T,T),
+                   annotation_name_rot = c(90, 90, 90,90,90,90,90,90,90,90,90,90),
+                   annotation_name_gp= gpar(fontsize = 8),
+                   col = colours)
+
+
+
+out<-draw(Heatmap(heatmap_data, 
+                  split=factor(ann[,1],levels=c("IDHwt","IDHmut-non-codel", "IDHmut-codel")),
+                  show_row_names=TRUE,
+                  column_names_gp = grid::gpar(fontsize = 0.5),
+                  row_names_gp = grid::gpar(fontsize = 0.5),
+                  cluster_row_slices = FALSE,
+                  column_names_rot = 90,
+                  na_col = "black",
+                  name="Heatmap",
+                  #top_annotation = top_annotation
+                  )+
+            ha, heatmap_legend_side="left", annotation_legend_side="left")
+
+rm(ha, colours, heatmap_data, out, selected_columns)
+
+```
+
+
+
+```{r}
+###transcriptome subtype#####
+#############################
+
+library(ComplexHeatmap)
+library(dplyr)
+
+FLAG= "microglia"
+
+MERGED_DATA<- MERGED_DATA_generation(FPKM_DATA)
+TCGA_DATA<- generate_TCGA_DATA_from_Ceccarelli(MERGED_DATA, FPKM_DATA)
+RNAseq_genes_astrocytic_df_list<- RNA_seq_data_processing()
+RNAseq_genes<- as.vector(RNAseq_genes_astrocytic_df_list[[1]])
+
+Heiland_genes_Heiland_df_list<- Heiland_data_processing()
+Heiland_genes<- as.vector(Heiland_genes_Heiland_df_list[[1]])
+
+astro_genes<- c(Heiland_genes,RNAseq_genes)
+astro_genes<- unique(astro_genes)
+microglia_genes<- microglia_BRENDA_genes_processing()
+
+if(FLAG=="astrocytes"){
+TCGA_DATA<- TCGA_DATA %>% dplyr::select(names(TCGA_DATA[,1:11]),astro_genes)
+}
+
+if(FLAG=="microglia"){
+TCGA_DATA<- TCGA_DATA %>% dplyr::select(names(TCGA_DATA[,1:11]),microglia_genes)
+}
+
+TCGA_DATA<- convert_num_surv_to_categorical_surv(TCGA_DATA)
+
+TCGA_DATA<-subset(TCGA_DATA, TCGA_DATA$Transcriptome.Subtype!="NE")
+
+
+TCGA_DATA <- TCGA_DATA[ order(TCGA_DATA$Transcriptome.Subtype),]
+heatmap_data<-data.matrix(TCGA_DATA[,11:ncol(TCGA_DATA)])
+annotation_row<- TCGA_DATA[,1:10]
+annotation_row$ESTIMATE.immune.score<- as.numeric(annotation_row$ESTIMATE.immune.score)
+annotation_row$ESTIMATE.stromal.score<- as.numeric(annotation_row$ESTIMATE.stromal.score)
+
+ann <- data.frame( 
+  annotation_row$Transcriptome.Subtype,
+  annotation_row$IDH.status,
+  annotation_row$IDH.codel.subtype,
+  annotation_row$Survival..months.,
+  annotation_row$Grade,
+  annotation_row$gender,
+  annotation_row$Histology,
+  annotation_row$project_id ,
+  annotation_row$ESTIMATE.immune.score,
+  annotation_row$ESTIMATE.stromal.score)
+
+
+
+names(ann)<- c("Transcriptome Subtype","IDH status","IDH subtype","survival","Grade","Gender","Histology",
+               "project_id" ,"immune", "stromal")
+
+colours<- list("Grade"=c("G2"="#00CBFF","G3"="#BEC100", "G4"="#00DB98"),
+               "IDH status"=c("Mutant"="#FA9A99","WT"="#756FB3"),         
+               "IDH subtype"=c("IDHmut-codel"="#125a5f","IDHmut-non-codel"="#5f1712", "IDHwt"="#FFFF33"),
+               "project_id"=c("TCGA-LGG"="#75E6DA","TCGA-GBM"="#05445E"),
+               "Gender"= c("female"="#800080", "male"="#80dfff"),
+               "survival"=c("less than 1"="yellow","1-3"="orange", "more than 3"="red", "na"="black"),
+               "histology"=c("astrocytoma"="#1B9E77","glioblastoma"="#05445E", "oligoastrocytoma"="#D95F02", "oligodendroglioma"="#7570B3"),
+               "Transcriptome Subtype"=c("CL"="#F9E4D4", "PN"="#D67D3E","NE"="#9C0F48", "ME"="#470D21"),
+               "GCIMP"=c("G-CIMP-high"="#1B9E77", "G-CIMP-low"="#05445E")
+               #,"immune"= c("high"="#B70A37", "mid"= "#173C6D", "low"="#0DACD1")
+               ) 
+
+
+ha = rowAnnotation(df = ann,
+                   immune_score= anno_barplot(annotation_row$ESTIMATE.immune.score),
+                   stromal_score=anno_barplot(annotation_row$ESTIMATE.stromal.score),
+                   show_annotation_name = c(TRUE, TRUE, TRUE, TRUE,T,T,T,T,T,T,T,T),
+                   annotation_name_rot = c(90, 90, 90,90,90,90,90,90,90,90,90,90),
+                   annotation_name_gp= gpar(fontsize = 8),
+                   col = colours)
+
+
+
+out<-draw(Heatmap(heatmap_data, 
+                  split=factor(ann[,1],levels=c("ME","CL", "PN")),
+                  show_row_names=TRUE,
+                  column_names_gp = grid::gpar(fontsize = 0.5),
+                  row_names_gp = grid::gpar(fontsize = 0.5),
+                  cluster_row_slices = FALSE,
+                  column_names_rot = 90,
+                  na_col = "black",
+                  name="Heatmap",
+                  #top_annotation = top_annotation
+                  )+
+            ha, heatmap_legend_side="left", annotation_legend_side="left")
+
+rm(ha, colours, heatmap_data, out, selected_columns)
+
+```
+
+```{r}
+###SURVIVAL#####
+################
+
+library(ComplexHeatmap)
+library(dplyr)
+
+FLAG= "microglia"
+
+MERGED_DATA<- MERGED_DATA_generation(FPKM_DATA)
+TCGA_DATA<- generate_TCGA_DATA_from_Ceccarelli(MERGED_DATA, FPKM_DATA)
+RNAseq_genes_astrocytic_df_list<- RNA_seq_data_processing()
+RNAseq_genes<- as.vector(RNAseq_genes_astrocytic_df_list[[1]])
+
+Heiland_genes_Heiland_df_list<- Heiland_data_processing()
+Heiland_genes<- as.vector(Heiland_genes_Heiland_df_list[[1]])
+
+astro_genes<- c(Heiland_genes,RNAseq_genes)
+astro_genes<- unique(astro_genes)
+microglia_genes<- microglia_BRENDA_genes_processing()
+
+if(FLAG=="astrocytes"){
+TCGA_DATA<- TCGA_DATA %>% dplyr::select(names(TCGA_DATA[,1:11]),astro_genes)
+}
+
+if(FLAG=="microglia"){
+TCGA_DATA<- TCGA_DATA %>% dplyr::select(names(TCGA_DATA[,1:11]),microglia_genes)
+}
+
+TCGA_DATA<- convert_num_surv_to_categorical_surv(TCGA_DATA)
+TCGA_DATA<-subset(TCGA_DATA, TCGA_DATA$Survival..months.!="na")
+
+
+TCGA_DATA <- TCGA_DATA[ order(TCGA_DATA$Survival..months.),]
+heatmap_data<-data.matrix(TCGA_DATA[,11:ncol(TCGA_DATA)])
+annotation_row<- TCGA_DATA[,1:10]
+annotation_row$ESTIMATE.immune.score<- as.numeric(annotation_row$ESTIMATE.immune.score)
+annotation_row$ESTIMATE.stromal.score<- as.numeric(annotation_row$ESTIMATE.stromal.score)
+
+ann <- data.frame( 
+  annotation_row$Survival..months.,
+  annotation_row$IDH.status,
+  annotation_row$IDH.codel.subtype,
+  annotation_row$Transcriptome.Subtype,
+  annotation_row$Grade,
+  annotation_row$gender,
+  annotation_row$Histology,
+  annotation_row$project_id ,
+  annotation_row$ESTIMATE.immune.score,
+  annotation_row$ESTIMATE.stromal.score)
+
+
+
+names(ann)<- c("survival","IDH status","IDH subtype","Transcriptome Subtype","Grade","Gender","Histology",
+               "project_id" ,"immune", "stromal")
+
+colours<- list("Grade"=c("G2"="#00CBFF","G3"="#BEC100", "G4"="#00DB98"),
+               "IDH status"=c("Mutant"="#FA9A99","WT"="#756FB3"),         
+               "IDH subtype"=c("IDHmut-codel"="#125a5f","IDHmut-non-codel"="#5f1712", "IDHwt"="#FFFF33"),
+               "project_id"=c("TCGA-LGG"="#75E6DA","TCGA-GBM"="#05445E"),
+               "Gender"= c("female"="#800080", "male"="#80dfff"),
+               "survival"=c("less than 1"="yellow","1-3"="orange", "more than 3"="red", "na"="black"),
+               "histology"=c("astrocytoma"="#1B9E77","glioblastoma"="#05445E", "oligoastrocytoma"="#D95F02", "oligodendroglioma"="#7570B3"),
+               "Transcriptome Subtype"=c("CL"="#F9E4D4", "PN"="#D67D3E","NE"="#9C0F48", "ME"="#470D21"),
+               "GCIMP"=c("G-CIMP-high"="#1B9E77", "G-CIMP-low"="#05445E")
+               #,"immune"= c("high"="#B70A37", "mid"= "#173C6D", "low"="#0DACD1")
+               ) 
+
+
+ha = rowAnnotation(df = ann,
+                   immune_score= anno_barplot(annotation_row$ESTIMATE.immune.score),
+                   stromal_score=anno_barplot(annotation_row$ESTIMATE.stromal.score),
+                   show_annotation_name = c(TRUE, TRUE, TRUE, TRUE,T,T,T,T,T,T,T,T),
+                   annotation_name_rot = c(90, 90, 90,90,90,90,90,90,90,90,90,90),
+                   annotation_name_gp= gpar(fontsize = 8),
+                   col = colours)
+
+
+
+out<-draw(Heatmap(heatmap_data, 
+                  split=factor(ann[,1],levels=c("less than 1","1-3", "more than 3")),
+                  show_row_names=TRUE,
+                  column_names_gp = grid::gpar(fontsize = 0.5),
+                  row_names_gp = grid::gpar(fontsize = 0.5),
+                  cluster_row_slices = FALSE,
+                  column_names_rot = 90,
+                  na_col = "black",
+                  name="Heatmap",
+                  #top_annotation = top_annotation
+                  )+
+            ha, heatmap_legend_side="left", annotation_legend_side="left")
+
+rm(ha, colours, heatmap_data, out, selected_columns)
+```
+
+```{r}
+###Gender#####
+##############
+library(ComplexHeatmap)
+library(dplyr)
+
+FLAG= "microglia"
+
+MERGED_DATA<- MERGED_DATA_generation(FPKM_DATA)
+TCGA_DATA<- generate_TCGA_DATA_from_Ceccarelli(MERGED_DATA, FPKM_DATA)
+RNAseq_genes_astrocytic_df_list<- RNA_seq_data_processing()
+RNAseq_genes<- as.vector(RNAseq_genes_astrocytic_df_list[[1]])
+
+Heiland_genes_Heiland_df_list<- Heiland_data_processing()
+Heiland_genes<- as.vector(Heiland_genes_Heiland_df_list[[1]])
+
+astro_genes<- c(Heiland_genes,RNAseq_genes)
+astro_genes<- unique(astro_genes)
+microglia_genes<- microglia_BRENDA_genes_processing()
+
+if(FLAG=="astrocytes"){
+TCGA_DATA<- TCGA_DATA %>% dplyr::select(names(TCGA_DATA[,1:11]),astro_genes)
+}
+
+if(FLAG=="microglia"){
+TCGA_DATA<- TCGA_DATA %>% dplyr::select(names(TCGA_DATA[,1:11]),microglia_genes)
+}
+
+TCGA_DATA<- convert_num_surv_to_categorical_surv(TCGA_DATA)
+
+
+TCGA_DATA <- TCGA_DATA[ order(TCGA_DATA$Survival..months.),]
+heatmap_data<-data.matrix(TCGA_DATA[,11:ncol(TCGA_DATA)])
+annotation_row<- TCGA_DATA[,1:10]
+annotation_row$ESTIMATE.immune.score<- as.numeric(annotation_row$ESTIMATE.immune.score)
+annotation_row$ESTIMATE.stromal.score<- as.numeric(annotation_row$ESTIMATE.stromal.score)
+
+ann <- data.frame( 
+  annotation_row$gender,
+  annotation_row$IDH.status,
+  annotation_row$IDH.codel.subtype,
+  annotation_row$Transcriptome.Subtype,
+  annotation_row$Survival..months.,
+  annotation_row$Grade,
+  annotation_row$Histology,
+  annotation_row$project_id ,
+  annotation_row$ESTIMATE.immune.score,
+  annotation_row$ESTIMATE.stromal.score)
+
+
+
+names(ann)<- c("Gender","IDH status","IDH subtype","Transcriptome Subtype","survival","Grade","Histology",
+               "project_id" ,"immune", "stromal")
+
+colours<- list("Grade"=c("G2"="#00CBFF","G3"="#BEC100", "G4"="#00DB98"),
+               "IDH status"=c("Mutant"="#FA9A99","WT"="#756FB3"),         
+               "IDH subtype"=c("IDHmut-codel"="#125a5f","IDHmut-non-codel"="#5f1712", "IDHwt"="#FFFF33"),
+               "project_id"=c("TCGA-LGG"="#75E6DA","TCGA-GBM"="#05445E"),
+               "Gender"= c("female"="#800080", "male"="#80dfff"),
+               "survival"=c("less than 1"="yellow","1-3"="orange", "more than 3"="red", "na"="black"),
+               "histology"=c("astrocytoma"="#1B9E77","glioblastoma"="#05445E", "oligoastrocytoma"="#D95F02", "oligodendroglioma"="#7570B3"),
+               "Transcriptome Subtype"=c("CL"="#F9E4D4", "PN"="#D67D3E","NE"="#9C0F48", "ME"="#470D21"),
+               "GCIMP"=c("G-CIMP-high"="#1B9E77", "G-CIMP-low"="#05445E")
+               #,"immune"= c("high"="#B70A37", "mid"= "#173C6D", "low"="#0DACD1")
+               ) 
+
+
+ha = rowAnnotation(df = ann,
+                   immune_score= anno_barplot(annotation_row$ESTIMATE.immune.score),
+                   stromal_score=anno_barplot(annotation_row$ESTIMATE.stromal.score),
+                   show_annotation_name = c(TRUE, TRUE, TRUE, TRUE,T,T,T,T,T,T,T,T),
+                   annotation_name_rot = c(90, 90, 90,90,90,90,90,90,90,90,90,90),
+                   annotation_name_gp= gpar(fontsize = 8),
+                   col = colours)
+
+
+
+out<-draw(Heatmap(heatmap_data, 
+                  split=factor(ann[,1],levels=c("male","female")),
+                  show_row_names=TRUE,
+                  column_names_gp = grid::gpar(fontsize = 0.5),
+                  row_names_gp = grid::gpar(fontsize = 0.5),
+                  cluster_row_slices = FALSE,
+                  column_names_rot = 90,
+                  na_col = "black",
+                  name="Heatmap",
+                  #top_annotation = top_annotation
+                  )+
+            ha, heatmap_legend_side="left", annotation_legend_side="left")
+
+rm(ha, colours, heatmap_data, out, selected_columns)
+```
+
+
+
+This part was noe included in the thesis- 
+Here we add to the heatmap of glioma feature an annotation (column annotation) that represents
+the brain region of the gene.
+we used data from a paper that is add to this R project (inside "project2\microglia regions\source data"). the data includes deseq of brain regions (each file is an output of deseq of two regions).
+Here there is a code examle of THA vs STG but it can be changes to other regions according to the regions in the directory project2\microglia regions.
+
+```{r}
+library(ComplexHeatmap)
+library(dplyr)
+
+region_deseq<- read.csv("microglia regions/THA vs STG.csv")
+region_deseq<-distinct(region_deseq,symbol, .keep_all= TRUE)
+region_deseq <- data.frame(region_deseq[,-1], row.names = region_deseq[,1],check.names=FALSE)
+
+
+MERGED_DATA<- MERGED_DATA_generation(FPKM_DATA)
+TCGA_DATA<- generate_TCGA_DATA_from_Ceccarelli(MERGED_DATA, FPKM_DATA)
+
+
+microglia_genes<- microglia_BRENDA_genes_processing()
+
+TCGA_DATA<- TCGA_DATA %>% dplyr::select(names(TCGA_DATA[,1:11]),microglia_genes)
+TCGA_DATA<- TCGA_DATA %>% dplyr::select(names(TCGA_DATA[,1:11]),any_of(row.names(region_deseq)))
+
+
+
+
+TCGA_DATA<- convert_num_surv_to_categorical_surv(TCGA_DATA)
+TCGA_DATA<-subset(TCGA_DATA, TCGA_DATA$Survival..months.!="na")
+
+
+TCGA_DATA <- TCGA_DATA[ order(TCGA_DATA$Survival..months.),]
+heatmap_data<-data.matrix(TCGA_DATA[,11:ncol(TCGA_DATA)])
+annotation_row<- TCGA_DATA[,1:10]
+annotation_row$ESTIMATE.immune.score<- as.numeric(annotation_row$ESTIMATE.immune.score)
+annotation_row$ESTIMATE.stromal.score<- as.numeric(annotation_row$ESTIMATE.stromal.score)
+
+ann <- data.frame( 
+  annotation_row$gender,
+  annotation_row$IDH.status,
+  annotation_row$IDH.codel.subtype,
+  annotation_row$Transcriptome.Subtype,
+  annotation_row$Survival..months.,
+  annotation_row$Grade,
+  annotation_row$Histology,
+  annotation_row$project_id ,
+  annotation_row$ESTIMATE.immune.score,
+  annotation_row$ESTIMATE.stromal.score)
+
+
+
+names(ann)<- c("Gender","IDH status","IDH subtype","Transcriptome Subtype","survival","Grade","Histology",
+               "project_id" ,"immune", "stromal")
+
+colours<- list("Grade"=c("G2"="#00CBFF","G3"="#BEC100", "G4"="#00DB98"),
+               "IDH status"=c("Mutant"="#FA9A99","WT"="#756FB3"),         
+               "IDH subtype"=c("IDHmut-codel"="#125a5f","IDHmut-non-codel"="#5f1712", "IDHwt"="#FFFF33"),
+               "project_id"=c("TCGA-LGG"="#75E6DA","TCGA-GBM"="#05445E"),
+               "Gender"= c("female"="#800080", "male"="#80dfff"),
+               "survival"=c("less than 1"="yellow","1-3"="orange", "more than 3"="red", "na"="black"),
+               "histology"=c("astrocytoma"="#1B9E77","glioblastoma"="#05445E", "oligoastrocytoma"="#D95F02", "oligodendroglioma"="#7570B3"),
+               "Transcriptome Subtype"=c("CL"="#F9E4D4", "PN"="#D67D3E","NE"="#9C0F48", "ME"="#470D21"),
+               "GCIMP"=c("G-CIMP-high"="#1B9E77", "G-CIMP-low"="#05445E")
+               #,"immune"= c("high"="#B70A37", "mid"= "#173C6D", "low"="#0DACD1")
+               ) 
+
+
+ha = rowAnnotation(df = ann,
+                   immune_score= anno_barplot(annotation_row$ESTIMATE.immune.score),
+                   stromal_score=anno_barplot(annotation_row$ESTIMATE.stromal.score),
+                   show_annotation_name = c(TRUE, TRUE, TRUE, TRUE,T,T,T,T,T,T,T,T),
+                   annotation_name_rot = c(90, 90, 90,90,90,90,90,90,90,90,90,90),
+                   annotation_name_gp= gpar(fontsize = 8),
+                   col = colours)
+
+
+## adding region as col annotation
+
+region_deseq<-region_deseq %>% filter(row.names(region_deseq) %in% colnames(heatmap_data))
+names(region_deseq)[1]<- "THA_STG"
+top_annotation = HeatmapAnnotation(df = region_deseq, logFC=anno_barplot(region_deseq[,1]),
+                                   annotation_name_gp= gpar(fontsize = 8))
+
+out<-draw(Heatmap(heatmap_data, split=factor(ann[,1],levels=c("male","female")),
+                  show_row_names=TRUE,
+                  column_names_gp = grid::gpar(fontsize = 0.5),
+                  cluster_row_slices = FALSE,
+                  column_names_rot = 90,
+                  na_col = "black",
+                  name="Heatmap",
+                  top_annotation = top_annotation
+)+
+  ha, heatmap_legend_side="left", annotation_legend_side="left")
+
+rm(ha, colours, heatmap_data, out, selected_columns)
+
+rm(region_deseq)
+```
+
